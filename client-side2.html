@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+
+<head>
+    <meta charset="utf-8">
+    <title>ChatApp</title>
+</head>
+
+<body class="chat">
+    <form id='message-form'>
+        <p id="reg_no"></p>
+        <b><span id="timer"></span> secs</b>
+        <input name='message' 
+               type="text" placeholder="Message" 
+               autofocus autocomplete="off" />
+        <button type="submit">Send</button>
+    </form>
+    
+    <script>
+        // Create WebSocket connection.
+        const socket = new WebSocket("ws://localhost:3000");
+        let remaining_time = 0;
+        // const reg_id = Math.floor(Math.random() * 101);
+        const reg_id = 30;
+        document.getElementById("reg_no").innerHTML = reg_id;
+
+        // Connection opened
+        socket.addEventListener("open", (event) => {
+            const data = {
+                "reg_no": reg_id,
+                "heh" : "21312",
+                "status" : "just_joined"
+            };
+            socket.send(JSON.stringify(data));
+        });
+
+        // Listen for messages
+        socket.addEventListener("message", (event) => {
+            const recv_data = JSON.parse(event.data);
+            
+            console.log("Message from server ", recv_data.message);
+            console.log("You have remaining time ", msToTime(recv_data.remaining_time));
+            console.log("Just Joined", recv_data.just_joined_time);
+            remaining_time = recv_data.remaining_time;
+        });
+
+        function msToTime(duration) {
+            var milliseconds = Math.floor((duration % 1000) / 100),
+                seconds = Math.floor((duration / 1000) % 60),
+                minutes = Math.floor((duration / (1000 * 60)) % 60),
+                hours = Math.floor((duration / (1000 * 60 * 60)) % 24);
+
+            hours = (hours < 10) ? "0" + hours : hours;
+            minutes = (minutes < 10) ? "0" + minutes : minutes;
+            seconds = (seconds < 10) ? "0" + seconds : seconds;
+
+            return hours + ":" + minutes + ":" + seconds + "." + milliseconds;
+        }
+
+        function updateTimer() {
+            if (remaining_time > 0) {
+                remaining_time -= 1000; 
+                console.log((remaining_time))
+                document.getElementById("timer").innerHTML = msToTime(remaining_time);
+            } else {
+                document.getElementById("timer").innerHTML = "00:00:00.000"; // Timer finished
+            }
+        }
+
+        // Update the timer every second
+        setInterval(updateTimer, 1000);
+    </script>
+</body>
+
+</html>

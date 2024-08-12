@@ -1,0 +1,19 @@
+{
+  "name": "ws",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "bufferutil": "^4.0.8"
+  }
+}
