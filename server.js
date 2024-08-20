@@ -1,117 +1,128 @@
 const express = require("express");
 const app = express();
+const cors = require('cors');
 const server = require('http').createServer(app);
+require('dotenv').config();
 const WebSocket = require('ws');
+const { selectAllExamCandidate, updateExamCandidate } = require("./data_access/examCandidate");
+app.use(cors());
+
 
 const wss = new WebSocket.Server({ server });
 
 const clients = new Map();
-const remainingTimeMap = new Map();
+const redis = {}
 
-const now = new Date(); // Get the current date and time
-const endTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 2, 0, 0, 0); // Set to 1 AM
-const remainingTime = endTime - now;
-
+const now = new Date(); 
+const startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 16, 0, 0, 0); // Set to 1 AM
+const endTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 17, 0, 0, 0); // Set to 1 AM
+const duration = endTime - startTime
 
 const getCurrentTime = () => {
-    return new Date().toLocaleTimeString();
+    return new Date();
 };
 
+
+/*
+    --- On connection ---
+    - candidates connects to the system and start the exam.
+    - logic takes the remaining_duration from the database and sends to all clients
+    - logic stores the connect_time to database
+    - as usual exam goes on
+
+    --- On disconnect ---
+    - the disconnect time is recorded and stored
+    - the remaining time is recorded and updated in db
+
+    --- On reconnect ---
+    - the connect time is updated and stored
+    - exam goes on
+
+*/
+
+const HEARTBEAT_TIMEOUT = 1000; // 10 seconds
+
+function heartbeat() {
+    this.isAlive = true;
+}
+
 wss.on('connection', function connection(ws) {
+    ws.isAlive = true;
+    ws.on('pong', heartbeat);
 
     console.log(`\nClient connected at ${getCurrentTime()}`);
 
-    ws.on('message', function incoming(message) {
+    ws.on('message', async function incoming(message) {
         const receivedMessage = JSON.parse(message);
-        console.log('Received: ', receivedMessage);
-        if (receivedMessage.status === "just_joined") {
-            console.log(2)
-            let mapRemainingTime = 0
-            clients.set(ws, receivedMessage.reg_no);
-            console.log(`Candidate with ${receivedMessage.reg_no} just joined at ${getCurrentTime()}`);
 
-
-            console.log(remainingTimeMap.has(receivedMessage.reg_no))
-
-            if (remainingTimeMap.has(receivedMessage.reg_no)){
-                mapRemainingTime = remainingTimeMap.get(receivedMessage.reg_no);
-            }
-            else
-            {
-                mapRemainingTime = remainingTime
-            }
-
-            const data = {
-                "hasMap": false,
-                "remaining_time": mapRemainingTime,
-                "just_joined_time": getCurrentTime(),
-                "message": `Welcome ${receivedMessage.reg_no} at ${getCurrentTime()}`
-            };
-            ws.send(JSON.stringify(data));
+        if (clients.has(ws)) {
+            // Handle reconnection logic if needed
         }
-        else if (receivedMessage.status == "needMap")
-        {
-            console.log(remainingTimeMap)
-            const data = {
-                "hasMap": true,
-                "map": remainingTimeMap
-            }
-            ws.send(JSON.stringify(data));
-        }
+
+        const connect_time = getCurrentTime();
+        clients.set(ws, {"regno": receivedMessage.regno, "exam_id": receivedMessage.exam_id});
+
+        const candidateRecord = await selectAllExamCandidate(receivedMessage);
+        const data = {
+            "connect_time": connect_time,
+            "exam_id": receivedMessage.exam_id,
+            "regno": receivedMessage.regno
+        };
+
+        updateExamCandidate(data);
+        ws.send(JSON.stringify(candidateRecord));
     });
 
-    ws.on('close', function close() {
-        const clientId = clients.get(ws);
-        clients.delete(ws);
-        const remaining_time = remainingTime - (new Date())
-        remainingTimeMap.set(clientId,remaining_time);
-        console.log(`\nClient ${clientId} disconnected at ${getCurrentTime()}, remaining_time for the client is ${remaining_time}`);
+    ws.on('close', async function close() {
+        if (clients.has(ws)) {
+            const client = clients.get(ws); 
+            const dc_time = getCurrentTime();
+
+            const candidateRecord = await selectAllExamCandidate(client);
+            const connect_time = new Date(candidateRecord[0].connect_time);
+            const elapsed_time = dc_time - connect_time;
+
+            const data = {
+                "remaining_duration": candidateRecord[0].remaining_duration - elapsed_time + 2000,
+                "disconnect_time": dc_time,
+                "exam_id": client.exam_id,
+                "regno": client.regno
+            };
+
+            updateExamCandidate(data);
+            clients.delete(ws);
+            console.log(`\nClient ${client.regno} disconnected at ${getCurrentTime()}`);
+        }
     });
 
     ws.on('error', function error(err) {
         console.error('WebSocket error: ', err);
     });
+
+
 });
 
-// Function to send a message to all clients
-function sendMessageToAllClients(message) {
-    wss.clients.forEach(function each(client) {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(message);
+// Heartbeat checking
+setInterval(() => {
+    console.log("pinging now");
+    wss.clients.forEach((ws) => {
+        if (ws.isAlive === false) {
+            return ws.terminate();
         }
+
+        ws.isAlive = false;
+        ws.ping();
     });
-}
+}, HEARTBEAT_TIMEOUT);
 
-// Function to check if it's the required time and send a message
-function checkAndSendMessage() {
-    const now = new Date();
-    if (now.getHours() === 22 && now.getMinutes() === 52) { // Set the starting time here
-        sendMessageToAllClients(`It is ${now.getHours()}:${now.getMinutes()}`);
-    }
-}
-
-// Calculate time until the next required time
-function getMillisecondsUntilNextRequiredTime() {
-    const now = new Date();
-    let nextRequiredTime = new Date();
-    nextRequiredTime.setHours(22, 52, 0, 0); // Set the starting time here
-
-    if (now >= nextRequiredTime) {
-        nextRequiredTime.setDate(nextRequiredTime.getDate() + 1); // Move to the next day
-    }
-
-    return nextRequiredTime - now;
-}
-
-// Set initial timeout for the requested time
-const initialDelay = getMillisecondsUntilNextRequiredTime();
-setTimeout(() => {
-    checkAndSendMessage(); // Send the message at the next requested time
-    setInterval(checkAndSendMessage, 60000); // Check every minute thereafter
-}, initialDelay);
 
 app.get("/", (req, res) => {
     res.send("Hello World");
 });
 
+app.get("/heartbeat", (req, res) => {
+    res.send("beating");
+});
+
 server.listen(3000, () => console.log('Server running on port: 3000'));
+
